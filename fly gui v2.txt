@@ -1,0 +1,494 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+local player = Players.LocalPlayer
+local camera = workspace.CurrentCamera
+
+local CONFIG = {
+	FlySpeed = 50,
+	MinSpeed = 5,
+	MaxSpeed = 1500,
+	MainColor = Color3.fromRGB(255, 45, 45),
+	GlowColor = Color3.fromRGB(255, 80, 80),
+	BackgroundDark = Color3.fromRGB(20, 8, 8),
+}
+
+local flying = false
+local verticalDirection = 0
+local bodyGyro, bodyVelocity
+local guiVisible = true
+local dragLocked = false
+
+local allButtons = {}      -- mọi nút cần ẩn/hiện theo toggle GUI
+local allDraggables = {}    -- mọi frame/nút cần drag được
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "FlyControlsGui"
+screenGui.ResetOnSpawn = false
+screenGui.IgnoreGuiInset = true
+screenGui.Parent = player:WaitForChild("PlayerGui")
+
+local function addGlow(parent, color, sizeOffset)
+	local glow = Instance.new("ImageLabel")
+	glow.Name = "Glow"
+	glow.BackgroundTransparency = 1
+	glow.Image = "rbxassetid://4996891970"
+	glow.ImageColor3 = color
+	glow.ImageTransparency = 0.35
+	glow.AnchorPoint = Vector2.new(0.5, 0.5)
+	glow.Position = UDim2.fromScale(0.5, 0.5)
+	glow.Size = UDim2.new(1, sizeOffset or 40, 1, sizeOffset or 40)
+	glow.ZIndex = parent.ZIndex - 1
+	glow.Parent = parent
+	return glow
+end
+
+-- Cho 1 GuiObject kéo được tự do bằng vị trí UDim2.Offset.
+-- Bị chặn khi dragLocked = true.
+local function makeDraggable(guiObject, handle)
+	handle = handle or guiObject
+	local dragging = false
+	local moved = false
+	local dragStart, startPos
+	local DRAG_THRESHOLD = 5
+
+	handle.InputBegan:Connect(function(input)
+		if dragLocked then return end
+		if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+			dragging = true
+			moved = false
+			dragStart = input.Position
+			startPos = guiObject.Position
+		end
+	end)
+
+	UserInputService.InputChanged:Connect(function(input)
+		if dragging and not dragLocked and (input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseMovement) then
+			local delta = input.Position - dragStart
+			if not moved and delta.Magnitude > DRAG_THRESHOLD then
+				moved = true
+			end
+			if moved then
+				guiObject.Position = UDim2.new(
+					startPos.X.Scale, startPos.X.Offset + delta.X,
+					startPos.Y.Scale, startPos.Y.Offset + delta.Y
+				)
+			end
+		end
+	end)
+
+	UserInputService.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+			dragging = false
+		end
+	end)
+
+	table.insert(allDraggables, guiObject)
+end
+
+local toggleBtn = Instance.new("TextButton")
+toggleBtn.Name = "ToggleFlyButton"
+toggleBtn.Size = UDim2.fromOffset(110, 44)
+toggleBtn.Position = UDim2.new(0, 20, 1, -180)
+toggleBtn.AnchorPoint = Vector2.new(0, 0)
+toggleBtn.BackgroundColor3 = CONFIG.BackgroundDark
+toggleBtn.Text = "FLY: OFF"
+toggleBtn.TextColor3 = CONFIG.MainColor
+toggleBtn.Font = Enum.Font.GothamBold
+toggleBtn.TextSize = 16
+toggleBtn.AutoButtonColor = false
+toggleBtn.Parent = screenGui
+
+local toggleCorner = Instance.new("UICorner")
+toggleCorner.CornerRadius = UDim.new(1, 0)
+toggleCorner.Parent = toggleBtn
+
+local toggleStroke = Instance.new("UIStroke")
+toggleStroke.Color = CONFIG.MainColor
+toggleStroke.Thickness = 2
+toggleStroke.Transparency = 0.1
+toggleStroke.Parent = toggleBtn
+
+addGlow(toggleBtn, CONFIG.GlowColor, 26)
+table.insert(allButtons, toggleBtn)
+makeDraggable(toggleBtn)
+
+local hideShowBtn = Instance.new("TextButton")
+hideShowBtn.Name = "ToggleGuiButton"
+hideShowBtn.Size = UDim2.fromOffset(40, 40)
+hideShowBtn.Position = UDim2.new(0, 10, 0, 50)
+hideShowBtn.BackgroundColor3 = CONFIG.BackgroundDark
+hideShowBtn.Text = "👁"
+hideShowBtn.TextColor3 = CONFIG.MainColor
+hideShowBtn.Font = Enum.Font.GothamBold
+hideShowBtn.TextSize = 18
+hideShowBtn.AutoButtonColor = false
+hideShowBtn.ZIndex = 10
+hideShowBtn.Parent = screenGui
+
+local hideShowCorner = Instance.new("UICorner")
+hideShowCorner.CornerRadius = UDim.new(1, 0)
+hideShowCorner.Parent = hideShowBtn
+
+local hideShowStroke = Instance.new("UIStroke")
+hideShowStroke.Color = CONFIG.MainColor
+hideShowStroke.Thickness = 2
+hideShowStroke.Transparency = 0.1
+hideShowStroke.Parent = hideShowBtn
+
+addGlow(hideShowBtn, CONFIG.GlowColor, 16)
+
+local lockBtn = Instance.new("TextButton")
+lockBtn.Name = "LockDragButton"
+lockBtn.Size = UDim2.fromOffset(40, 40)
+lockBtn.Position = UDim2.new(0, 60, 0, 50)
+lockBtn.BackgroundColor3 = CONFIG.BackgroundDark
+lockBtn.Text = "🔓"
+lockBtn.TextColor3 = CONFIG.MainColor
+lockBtn.Font = Enum.Font.GothamBold
+lockBtn.TextSize = 18
+lockBtn.AutoButtonColor = false
+lockBtn.ZIndex = 10
+lockBtn.Parent = screenGui
+
+local lockCorner = Instance.new("UICorner")
+lockCorner.CornerRadius = UDim.new(1, 0)
+lockCorner.Parent = lockBtn
+
+local lockStroke = Instance.new("UIStroke")
+lockStroke.Color = CONFIG.MainColor
+lockStroke.Thickness = 2
+lockStroke.Transparency = 0.1
+lockStroke.Parent = lockBtn
+
+addGlow(lockBtn, CONFIG.GlowColor, 16)
+
+local function makeVerticalButton(text, yOffset)
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.fromOffset(56, 56)
+	btn.Position = UDim2.new(1, -76, 1, yOffset)
+	btn.BackgroundColor3 = CONFIG.BackgroundDark
+	btn.Text = text
+	btn.TextColor3 = CONFIG.MainColor
+	btn.Font = Enum.Font.GothamBold
+	btn.TextSize = 22
+	btn.AutoButtonColor = false
+	btn.Parent = screenGui
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(1, 0)
+	corner.Parent = btn
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = CONFIG.MainColor
+	stroke.Thickness = 2
+	stroke.Transparency = 0.15
+	stroke.Parent = btn
+
+	addGlow(btn, CONFIG.GlowColor, 20)
+	table.insert(allButtons, btn)
+	makeDraggable(btn)
+
+	return btn
+end
+
+local upBtn = makeVerticalButton("▲", -150)
+local downBtn = makeVerticalButton("▼", -80)
+
+local speedContainer = Instance.new("Frame")
+speedContainer.Name = "SpeedSliderContainer"
+speedContainer.Size = UDim2.fromOffset(200, 60)
+speedContainer.Position = UDim2.new(0, 20, 1, -250)
+speedContainer.BackgroundColor3 = CONFIG.BackgroundDark
+speedContainer.BackgroundTransparency = 0.15
+speedContainer.Parent = screenGui
+
+local speedCorner = Instance.new("UICorner")
+speedCorner.CornerRadius = UDim.new(0, 12)
+speedCorner.Parent = speedContainer
+
+local speedStroke = Instance.new("UIStroke")
+speedStroke.Color = CONFIG.MainColor
+speedStroke.Thickness = 2
+speedStroke.Transparency = 0.2
+speedStroke.Parent = speedContainer
+
+addGlow(speedContainer, CONFIG.GlowColor, 30)
+table.insert(allButtons, speedContainer)
+makeDraggable(speedContainer)
+
+
+
+local speedLabel = Instance.new("TextLabel")
+speedLabel.Name = "SpeedLabel"
+speedLabel.Size = UDim2.new(1, -16, 0, 20)
+speedLabel.Position = UDim2.new(0, 8, 0, 4)
+speedLabel.BackgroundTransparency = 1
+speedLabel.Text = "SPEED: " .. CONFIG.FlySpeed
+speedLabel.TextColor3 = CONFIG.MainColor
+speedLabel.Font = Enum.Font.GothamBold
+speedLabel.TextSize = 14
+speedLabel.TextXAlignment = Enum.TextXAlignment.Left
+speedLabel.Parent = speedContainer
+
+local sliderTrack = Instance.new("Frame")
+sliderTrack.Name = "SliderTrack"
+sliderTrack.Size = UDim2.new(1, -24, 0, 8)
+sliderTrack.Position = UDim2.new(0, 12, 0, 36)
+sliderTrack.BackgroundColor3 = Color3.fromRGB(50, 20, 20)
+sliderTrack.Parent = speedContainer
+
+local sliderTrackCorner = Instance.new("UICorner")
+sliderTrackCorner.CornerRadius = UDim.new(1, 0)
+sliderTrackCorner.Parent = sliderTrack
+
+local sliderFill = Instance.new("Frame")
+sliderFill.Name = "SliderFill"
+sliderFill.BackgroundColor3 = CONFIG.MainColor
+sliderFill.BorderSizePixel = 0
+sliderFill.Size = UDim2.new(0, 0, 1, 0)
+sliderFill.Parent = sliderTrack
+
+local sliderFillCorner = Instance.new("UICorner")
+sliderFillCorner.CornerRadius = UDim.new(1, 0)
+sliderFillCorner.Parent = sliderFill
+
+local sliderKnob = Instance.new("Frame")
+sliderKnob.Name = "SliderKnob"
+sliderKnob.Size = UDim2.fromOffset(20, 20)
+sliderKnob.AnchorPoint = Vector2.new(0.5, 0.5)
+sliderKnob.Position = UDim2.new(0, 0, 0.5, 0)
+sliderKnob.BackgroundColor3 = CONFIG.MainColor
+sliderKnob.ZIndex = 5
+sliderKnob.Parent = sliderTrack
+
+local sliderKnobCorner = Instance.new("UICorner")
+sliderKnobCorner.CornerRadius = UDim.new(1, 0)
+sliderKnobCorner.Parent = sliderKnob
+
+local sliderKnobStroke = Instance.new("UIStroke")
+sliderKnobStroke.Color = Color3.fromRGB(255, 255, 255)
+sliderKnobStroke.Transparency = 0.5
+sliderKnobStroke.Thickness = 1.5
+sliderKnobStroke.Parent = sliderKnob
+
+addGlow(sliderKnob, CONFIG.GlowColor, 14)
+
+local function updateSliderVisual(ratio)
+	ratio = math.clamp(ratio, 0, 1)
+	sliderFill.Size = UDim2.new(ratio, 0, 1, 0)
+	sliderKnob.Position = UDim2.new(ratio, 0, 0.5, 0)
+end
+
+local function setSpeedFromRatio(ratio)
+	ratio = math.clamp(ratio, 0, 1)
+	local speed = CONFIG.MinSpeed + (CONFIG.MaxSpeed - CONFIG.MinSpeed) * ratio
+	CONFIG.FlySpeed = math.floor(speed + 0.5)
+	speedLabel.Text = "SPEED: " .. CONFIG.FlySpeed
+	updateSliderVisual(ratio)
+end
+
+-- set vị trí thanh trượt ban đầu khớp với FlySpeed mặc định
+setSpeedFromRatio((CONFIG.FlySpeed - CONFIG.MinSpeed) / (CONFIG.MaxSpeed - CONFIG.MinSpeed))
+
+do
+	local sliding = false
+
+	local function ratioFromInput(inputPos)
+		local trackPos = sliderTrack.AbsolutePosition.X
+		local trackWidth = sliderTrack.AbsoluteSize.X
+		if trackWidth <= 0 then return 0 end
+		return (inputPos.X - trackPos) / trackWidth
+	end
+
+	sliderTrack.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+			sliding = true
+			setSpeedFromRatio(ratioFromInput(input.Position))
+		end
+	end)
+
+	sliderKnob.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+			sliding = true
+		end
+	end)
+
+	UserInputService.InputChanged:Connect(function(input)
+		if sliding and (input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseMovement) then
+			setSpeedFromRatio(ratioFromInput(input.Position))
+		end
+	end)
+
+	UserInputService.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+			sliding = false
+		end
+	end)
+end
+
+local togglingGui = false
+
+hideShowBtn.MouseButton1Click:Connect(function()
+	if togglingGui then return end
+	togglingGui = true
+
+	guiVisible = not guiVisible
+	for _, btn in ipairs(allButtons) do
+		btn.Visible = guiVisible
+	end
+	hideShowBtn.Text = guiVisible and "👁" or "👁‍🗨"
+
+	task.delay(0.3, function()
+		togglingGui = false
+	end)
+end)
+
+local togglingLock = false
+
+lockBtn.MouseButton1Click:Connect(function()
+	if togglingLock then return end
+	togglingLock = true
+
+	dragLocked = not dragLocked
+	lockBtn.Text = dragLocked and "🔒" or "🔓"
+
+	task.delay(0.3, function()
+		togglingLock = false
+	end)
+end)
+
+local function bindHold(button, onStart, onEnd)
+	button.MouseButton1Down:Connect(onStart)
+	button.MouseButton1Up:Connect(onEnd)
+	button.MouseLeave:Connect(onEnd)
+
+	button.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.Touch then
+			onStart()
+		end
+	end)
+	button.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.Touch then
+			onEnd()
+		end
+	end)
+end
+
+bindHold(upBtn,
+	function() verticalDirection = 1 end,
+	function() if verticalDirection == 1 then verticalDirection = 0 end end
+)
+
+bindHold(downBtn,
+	function() verticalDirection = -1 end,
+	function() if verticalDirection == -1 then verticalDirection = 0 end end
+)
+
+local function startFly()
+	local character = player.Character
+	if not character then return end
+	local hrp = character:FindFirstChild("HumanoidRootPart")
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not hrp or not humanoid then return end
+
+	flying = true
+	humanoid.PlatformStand = true
+	humanoid.AutoRotate = false
+
+	bodyGyro = Instance.new("BodyGyro")
+	bodyGyro.D = 100
+	bodyGyro.P = 30000
+	bodyGyro.MaxTorque = Vector3.new(400000, 400000, 400000)
+	bodyGyro.CFrame = hrp.CFrame
+	bodyGyro.Parent = hrp
+
+	bodyVelocity = Instance.new("BodyVelocity")
+	bodyVelocity.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+	bodyVelocity.Velocity = Vector3.new()
+	bodyVelocity.Parent = hrp
+
+	toggleBtn.Text = "FLY: ON"
+end
+
+local function stopFly()
+	flying = false
+	local character = player.Character
+	if character then
+		local humanoid = character:FindFirstChildOfClass("Humanoid")
+		if humanoid then
+			humanoid.PlatformStand = false
+			humanoid.AutoRotate = true
+		end
+	end
+
+	if bodyGyro then bodyGyro:Destroy() end
+	if bodyVelocity then bodyVelocity:Destroy() end
+
+	toggleBtn.Text = "FLY: OFF"
+end
+
+local togglingFly = false
+toggleBtn.MouseButton1Click:Connect(function()
+	if togglingFly then return end
+	togglingFly = true
+
+	if flying then
+		stopFly()
+	else
+		startFly()
+	end
+
+	task.delay(0.3, function()
+		togglingFly = false
+	end)
+end)
+
+RunService.RenderStepped:Connect(function()
+	if not flying then return end
+
+	local character = player.Character
+	if not character then return end
+	local hrp = character:FindFirstChild("HumanoidRootPart")
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not hrp or not humanoid or not bodyVelocity or not bodyGyro then return end
+
+	local moveDir = humanoid.MoveDirection
+
+	local camCFrame = camera.CFrame
+	local lookVector = camCFrame.LookVector
+	local rightVector = camCFrame.RightVector
+
+	local forwardInput = 0
+	local rightInput = 0
+	local flatLookForInput = Vector3.new(camCFrame.LookVector.X, 0, camCFrame.LookVector.Z)
+	if flatLookForInput.Magnitude > 0 then
+		flatLookForInput = flatLookForInput.Unit
+		forwardInput = moveDir:Dot(flatLookForInput)
+		local flatRight = Vector3.new(camCFrame.RightVector.X, 0, camCFrame.RightVector.Z).Unit
+		rightInput = moveDir:Dot(flatRight)
+	end
+
+	local horizontal = (lookVector * forwardInput) + (rightVector * rightInput)
+	local vertical = Vector3.new(0, verticalDirection, 0)
+
+	local finalDir = horizontal + vertical
+	if finalDir.Magnitude > 1 then
+		finalDir = finalDir.Unit
+	end
+
+	bodyVelocity.Velocity = finalDir * CONFIG.FlySpeed
+
+	if lookVector.Magnitude > 0 then
+		bodyGyro.CFrame = CFrame.lookAt(hrp.Position, hrp.Position + lookVector)
+	end
+end)
+
+player.CharacterAdded:Connect(function()
+	if flying then
+		stopFly()
+	end
+end)
+
+print("[FlyControls] Loaded - speed slider, drag-all, lock-drag enabled")
